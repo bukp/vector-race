@@ -1,23 +1,99 @@
 use sdl2::mouse::MouseButton;
+use sdl2::pixels::Color;
+use sdl2::rect::Rect;
+use sdl2::render::{Canvas, RenderTarget};
+use sdl2::video::Window;
+use sdl2::EventPump;
+
+use crate::game::map::GameMap;
+
+/// Represent all the context needed to access the window
+pub struct Context {
+    pub window: Canvas<Window>,
+    pub event_pump: EventPump,
+}
+
+impl Context {
+    /// Initialise everything to get sdl ready to draw on screen
+    pub fn init() -> Self {
+        let sdl_context = sdl2::init().unwrap();
+        let video_subsystem = sdl_context.video().unwrap();
+        let window = video_subsystem
+            .window("vector-race", 800, 600)
+            .position_centered()
+            .resizable()
+            .build()
+            .unwrap();
+
+        let canvas = window.into_canvas().build().unwrap();
+        let event_pump = sdl_context.event_pump().unwrap();
+
+        Self {
+            window: canvas,
+            event_pump,
+        }
+    }
+
+    /// Return the size of the window in pixel
+    pub fn get_window_size(&self) -> (u32, u32) {
+        self.window.output_size().unwrap()
+    }
+}
 
 /// Structure representing the camera viewing the world, used to render it and interact with it (click, slide, zoom)
 #[derive(Debug, Clone)]
 pub struct View {
     start_point: (f32, f32), // Top right corner in world position
     cam_size: (u16, u16),    // Size of the view
+    game_map: GameMap,
     cell_size: u16,          // Size of the cell's representation in pixel on the window
 }
 
 impl View {
     /// Create a new View
-    pub fn new(start_pos: (f32, f32), cam_size: (u32, u32), cell_size: u32) -> Self {
+    pub fn new(start_pos: (f32, f32), cam_size: (u32, u32), game_map: GameMap, cell_size: u32) -> Self {
         View {
             start_point: start_pos,
             cam_size: (
                 cam_size.0.try_into().unwrap(),
                 cam_size.1.try_into().unwrap(),
             ),
+            game_map,
             cell_size: cell_size.try_into().unwrap(),
+        }
+    }
+
+    /// Render the view on the given canvas
+    pub fn render<T: RenderTarget>(&self, canvas: &mut Canvas<T>, mouse: &Mouse) {
+        
+        // Determine which cells are visible from the view
+        let covered_cells = (
+            self.get_cell_from_window((0, 0)),
+            self.get_cell_from_window(self.get_size()),
+        );
+
+        let cell_size = self.get_cell_size();
+        
+        // Render each cell to the canvas
+        for x in covered_cells.0 .0..=covered_cells.1 .0 {
+            for y in covered_cells.0 .1..=covered_cells.1 .1 {
+
+                // Get the right color to draw the cell
+                canvas.set_draw_color(self.game_map.get_tile((x, y)).tile_color());
+
+                // Draw with a different color if the mouse is on
+                if let Some(pos) = mouse.position {
+                    if self.get_cell_from_window(pos) == (x, y) {
+                        canvas.set_draw_color(Color::RED);
+                    }
+                }
+                
+                // Draw the cell at the correct location
+                let (x, y) = self.get_window_pos(self.get_cell_world_pos((x, y)));
+                canvas
+                    .fill_rect(Rect::new(x, y, cell_size, cell_size))
+                    .unwrap();
+            }
         }
     }
 
@@ -69,6 +145,12 @@ impl View {
             center_point.0 + (self.start_point.0 - center_point.0) * scale_factor,
             center_point.1 + (self.start_point.1 - center_point.1) * scale_factor,
         );
+
+        // Replace the start point to avoid graphic glithes
+        self.start_point = (
+            (self.start_point.0 * self.cell_size as f32).round() / self.cell_size as f32,
+            (self.start_point.1 * self.cell_size as f32).round() / self.cell_size as f32
+        )
     }
 
     /// Calculate the world position in pixel corresponding to a pixel position on the window
@@ -104,11 +186,10 @@ impl View {
 pub struct Mouse {
     pub clicked: Option<(MouseButton, (i32, i32))>, // Current clicked button and the window position it was clicked
     pub position: Option<(i32, i32)>, // Current window position of the mouse, None if the mouse is outisde the window
-    // If the mouse is clicked, the mouse should be garanteed to have a position (Some)
+                                      // If the mouse is clicked, the mouse should be garanteed to have a position (Some)
 }
 
 impl Mouse {
-
     /// Create a new Mouse
     pub fn new() -> Self {
         Mouse {
@@ -117,8 +198,8 @@ impl Mouse {
         }
     }
 
-    /// Move the mouse to a new position, 
-    /// 
+    /// Move the mouse to a new position,
+    ///
     /// Return a vector of the mouse movement from las position if the mouse was already in the window
     pub fn move_to(&mut self, pos: (i32, i32)) -> Option<(i32, i32)> {
         let vec = if let Some((x, y)) = self.position {
@@ -130,7 +211,7 @@ impl Mouse {
         vec
     }
 
-    /// Return the clicked button and the position it was clicked 
+    /// Return the clicked button and the position it was clicked
     pub fn get_click(&self) -> Option<(MouseButton, (i32, i32))> {
         self.clicked
     }
