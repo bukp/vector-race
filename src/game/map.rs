@@ -5,8 +5,10 @@ use std::path::Path;
 
 use sdl2::pixels::Color;
 
+use crate::interface::Cell;
+
 /// Represent a tile on the map and all its properties
-/// 
+///
 /// Prototype, miss a lot of features for now
 #[derive(Debug, Clone, Copy)]
 pub enum Tile {
@@ -19,7 +21,6 @@ pub enum Tile {
 }
 
 impl Tile {
-
     /// Create a tile from a character, is used to genarate a map from a file
     pub fn read_tile(tile_char: &str) -> Result<Self, String> {
         Ok(match tile_char {
@@ -39,14 +40,13 @@ impl Tile {
         })
     }
 
-
     /// Get the color for a tile, is very likely to be replaced by some kind of texture
     pub fn tile_color(&self) -> Color {
         match self {
             Self::Empty => Color::WHITE,
             Self::Road => Color::GREY,
             Self::Wall => Color::BLACK,
-            Self::Gravel => Color::GRAY,
+            Self::Gravel => Color::RGB(100, 100, 100),
             Self::Dirt => Color::RED,
             Self::Ice => Color::BLUE,
         }
@@ -56,7 +56,7 @@ impl Tile {
 /// Represent the map and the objects/players on it
 #[derive(Debug, Clone)]
 pub struct GameMap {
-    terrain: HashMap<(i32, i32), Tile>,
+    terrain: HashMap<Cell, Tile>,
     default_tile: Tile,
 }
 
@@ -70,13 +70,13 @@ impl GameMap {
     }
 
     /// Set tile infos
-    pub fn set_tile(&mut self, position: (i32, i32), tile: Tile) {
-        self.terrain.insert(position, tile);
+    pub fn set_tile<T: Into<Cell>>(&mut self, position: T, tile: Tile) {
+        self.terrain.insert(position.into(), tile);
     }
 
     /// Get tile infos from its position
-    pub fn get_tile(&self, position: (i32, i32)) -> Tile {
-        match self.terrain.get(&position) {
+    pub fn get_tile<T: Into<Cell>>(&self, position: T) -> Tile {
+        match self.terrain.get(&position.into()) {
             Some(x) => *x,
             None => self.default_tile,
         }
@@ -93,8 +93,8 @@ impl GameMap {
             .map_err(|x| x.to_string())?;
 
         let mut map = GameMap::empty();
-        for (x, i) in content.split('\n').enumerate() {
-            for (y, j) in i.trim().split('|').enumerate() {
+        for (y, i) in content.split('\n').enumerate() {
+            for (x, j) in i.trim().split('|').enumerate() {
                 map.set_tile(
                     (x as i32, y as i32),
                     Tile::read_tile(j).map_err(|err| format!("{} at ({};{})", err, x, y))?,

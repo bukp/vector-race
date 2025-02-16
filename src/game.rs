@@ -7,11 +7,10 @@ use sdl2::pixels::Color;
 pub mod map;
 
 pub fn launch(mut context: Context, game_map: GameMap) {
-    let mut world_view = View::new((0., 0.), context.get_window_size(), game_map, 24);
+    let mut world_view = View::new((0., 0.), context.get_window_size(), game_map, 36);
     let mut mouse = Mouse::new();
 
     'running: loop {
-
         // Render the view on the window
         world_view.render(&mut context.window, &mouse);
 
@@ -35,12 +34,20 @@ pub fn launch(mut context: Context, game_map: GameMap) {
                         (mouse.move_to((x, y)), mouse.get_click())
                     {
                         world_view.slide(vector);
+                    };
+                    if let Some((MouseButton::Right, _)) = mouse.get_click() {
+                        let tile = world_view.get_world_pos(mouse.position.unwrap()).cell();
+                        world_view.get_map_mut().set_tile(tile, map::Tile::Dirt);
                     }
                 }
                 Event::MouseButtonDown {
                     mouse_btn, x, y, ..
                 } => {
                     mouse.click(mouse_btn, (x, y));
+                    if let Some((MouseButton::Right, _)) = mouse.get_click() {
+                        let tile = world_view.get_world_pos(mouse.position.unwrap()).cell();
+                        world_view.get_map_mut().set_tile(tile, map::Tile::Dirt);
+                    }
                 }
                 Event::MouseButtonUp {
                     mouse_btn, x, y, ..
@@ -49,7 +56,9 @@ pub fn launch(mut context: Context, game_map: GameMap) {
                 }
                 Event::MouseWheel { y, .. } => {
                     let factor = if y > 0 { 1.12 } else { 1. / 1.12 };
-                    world_view.zoom(factor, world_view.get_world_pos(mouse.position.unwrap()));
+                    if let Some(pos) = mouse.position {
+                        world_view.zoom(factor, world_view.get_world_pos(pos));
+                    }
                 }
                 _ => {}
             }

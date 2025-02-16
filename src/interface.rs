@@ -40,20 +40,68 @@ impl Context {
     }
 }
 
+/// Represent a position on the window in pixel, therefore is most of the time non-negative
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct WindowPosition(pub i32, pub i32);
+
+impl From<(i32, i32)> for WindowPosition {
+    fn from(x: (i32, i32)) -> Self {
+        WindowPosition(x.0, x.1)
+    }
+}
+
+/// Represent an in world position, the integer part is the cell's position
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct WorldPosition(pub f32, pub f32);
+
+impl From<(f32, f32)> for WorldPosition {
+    fn from(x: (f32, f32)) -> Self {
+        WorldPosition(x.0, x.1)
+    }
+}
+
+impl WorldPosition {
+    /// Calculate cell indices corresponding to world position
+    pub fn cell(&self) -> Cell {
+        (self.0.floor() as i32, self.1.floor() as i32).into()
+    }
+}
+
+/// Represent a cell's position
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct Cell(pub i32, pub i32);
+
+impl From<(i32, i32)> for Cell {
+    fn from(x: (i32, i32)) -> Self {
+        Cell(x.0, x.1)
+    }
+}
+
+impl Cell {
+    pub fn world_pos(&self) -> WorldPosition {
+        (self.0 as f32, self.1 as f32).into()
+    }
+}
+
 /// Structure representing the camera viewing the world, used to render it and interact with it (click, slide, zoom)
 #[derive(Debug, Clone)]
 pub struct View {
-    start_point: (f32, f32), // Top right corner in world position
-    cam_size: (u16, u16),    // Size of the view
+    start_point: WorldPosition, // Top right corner in world position
+    cam_size: (u16, u16),       // Size of the view
     game_map: GameMap,
-    cell_size: u16,          // Size of the cell's representation in pixel on the window
+    cell_size: u16, // Size of the cell's representation in pixel on the window
 }
 
 impl View {
     /// Create a new View
-    pub fn new(start_pos: (f32, f32), cam_size: (u32, u32), game_map: GameMap, cell_size: u32) -> Self {
+    pub fn new<T: Into<WorldPosition>>(
+        start_pos: T,
+        cam_size: (u32, u32),
+        game_map: GameMap,
+        cell_size: u32,
+    ) -> Self {
         View {
-            start_point: start_pos,
+            start_point: start_pos.into(),
             cam_size: (
                 cam_size.0.try_into().unwrap(),
                 cam_size.1.try_into().unwrap(),
@@ -65,36 +113,38 @@ impl View {
 
     /// Render the view on the given canvas
     pub fn render<T: RenderTarget>(&self, canvas: &mut Canvas<T>, mouse: &Mouse) {
-        
         // Determine which cells are visible from the view
         let covered_cells = (
-            self.get_cell_from_window((0, 0)),
-            self.get_cell_from_window(self.get_size()),
+            self.get_world_pos((0, 0)).cell(),
+            self.get_world_pos(self.get_size()).cell(),
         );
 
         let cell_size = self.get_cell_size();
-        
+
         // Render each cell to the canvas
         for x in covered_cells.0 .0..=covered_cells.1 .0 {
             for y in covered_cells.0 .1..=covered_cells.1 .1 {
-
                 // Get the right color to draw the cell
                 canvas.set_draw_color(self.game_map.get_tile((x, y)).tile_color());
 
                 // Draw with a different color if the mouse is on
                 if let Some(pos) = mouse.position {
-                    if self.get_cell_from_window(pos) == (x, y) {
+                    if self.get_world_pos(pos).cell() == Cell(x, y) {
                         canvas.set_draw_color(Color::RED);
                     }
                 }
-                
+
                 // Draw the cell at the correct location
-                let (x, y) = self.get_window_pos(self.get_cell_world_pos((x, y)));
+                let WindowPosition(x, y) = self.get_window_pos(Cell(x, y).world_pos());
                 canvas
                     .fill_rect(Rect::new(x, y, cell_size, cell_size))
                     .unwrap();
             }
         }
+    }
+
+    pub fn get_map_mut(&mut self) -> &mut GameMap {
+        &mut self.game_map
     }
 
     /// Slide the view by a vector in pixel representing the slide on the window
@@ -103,7 +153,7 @@ impl View {
             vector.0 as f32 / self.cell_size as f32,
             vector.1 as f32 / self.cell_size as f32,
         );
-        self.start_point = (self.start_point.0 + vector.0, self.start_point.1 + vector.1);
+        self.start_point = (self.start_point.0 + vector.0, self.start_point.1 + vector.1).into();
     }
 
     /// Return the size in pixel of the view
@@ -127,8 +177,9 @@ impl View {
     /// Zoom in/out the view with the given zoom_factor around the center_point.
     ///
     /// A zoom_factor > 1 will zoom in and a zoom_factor < 1 will zoom out.
-    pub fn zoom(&mut self, zoom_factor: f32, center_point: (f32, f32)) {
+    pub fn zoom<T: Into<WorldPosition>>(&mut self, zoom_factor: f32, center_point: T) {
         assert!(zoom_factor > 0., "use of negative zoom factor");
+        let center_point = center_point.into();
 
         //Calculate new size of cells on display in pixel
         let cs = (self.cell_size as f32 * zoom_factor).round() as u16;
@@ -141,43 +192,37 @@ impl View {
         self.cell_size = cs;
 
         //Replace the camera to make the cursor point to the same world location
-        self.start_point = (
+        let start_point = (
             center_point.0 + (self.start_point.0 - center_point.0) * scale_factor,
             center_point.1 + (self.start_point.1 - center_point.1) * scale_factor,
         );
 
         // Replace the start point to avoid graphic glithes
         self.start_point = (
-            (self.start_point.0 * self.cell_size as f32).round() / self.cell_size as f32,
-            (self.start_point.1 * self.cell_size as f32).round() / self.cell_size as f32
+            (start_point.0 * self.cell_size as f32).round() / self.cell_size as f32,
+            (start_point.1 * self.cell_size as f32).round() / self.cell_size as f32,
         )
+            .into()
     }
 
     /// Calculate the world position in pixel corresponding to a pixel position on the window
-    pub fn get_world_pos(&self, window_pos: (i32, i32)) -> (f32, f32) {
+    pub fn get_world_pos<T: Into<WindowPosition>>(&self, window_pos: T) -> WorldPosition {
+        let window_pos: WindowPosition = window_pos.into();
         (
             window_pos.0 as f32 / self.cell_size as f32 + self.start_point.0,
             window_pos.1 as f32 / self.cell_size as f32 + self.start_point.1,
         )
+            .into()
     }
 
     /// Calculate the window position in pixels given a world position
-    pub fn get_window_pos(&self, world_pos: (f32, f32)) -> (i32, i32) {
+    pub fn get_window_pos<T: Into<WorldPosition>>(&self, world_pos: T) -> WindowPosition {
+        let world_pos = world_pos.into();
         (
             ((world_pos.0 - self.start_point.0) * self.cell_size as f32).round() as i32,
             ((world_pos.1 - self.start_point.1) * self.cell_size as f32).round() as i32,
         )
-    }
-
-    /// Return top left corner's world position of a cell
-    pub fn get_cell_world_pos(&self, cell_pos: (i32, i32)) -> (f32, f32) {
-        (cell_pos.0 as f32, cell_pos.1 as f32)
-    }
-
-    /// Calculate cell indices from window position
-    pub fn get_cell_from_window(&self, window_pos: (i32, i32)) -> (i32, i32) {
-        let pos = self.get_world_pos(window_pos);
-        (pos.0.floor() as i32, pos.1.floor() as i32)
+            .into()
     }
 }
 
@@ -186,7 +231,7 @@ impl View {
 pub struct Mouse {
     pub clicked: Option<(MouseButton, (i32, i32))>, // Current clicked button and the window position it was clicked
     pub position: Option<(i32, i32)>, // Current window position of the mouse, None if the mouse is outisde the window
-                                      // If the mouse is clicked, the mouse should be garanteed to have a position (Some)
+                                      // If the mouse is clicked, the mouse should be guaranteed to have a position (Some)
 }
 
 impl Mouse {
