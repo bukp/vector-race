@@ -10,7 +10,7 @@ use crate::interface::Cell;
 /// Represent a tile on the map and all its properties
 ///
 /// Prototype, miss a lot of features for now
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Tile {
     Empty,
     Road,
@@ -103,5 +103,9 @@ impl GameMap {
         }
 
         Ok(map)
+    }
+
+    pub fn iter_tiles(&self) -> impl Iterator<Item = ((i32, i32), &Tile)> {
+        self.terrain.iter().map(|x| ((x.0 .0, x.0 .1), x.1))
     }
 }

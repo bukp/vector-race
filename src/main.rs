@@ -3,6 +3,7 @@
 
 pub mod game;
 pub mod interface;
+pub mod utils;
 
 fn main() {
     let game_map = game::map::GameMap::generate_from_file(std::path::Path::new("maps\\test.trk"))

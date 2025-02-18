@@ -1,11 +1,13 @@
+use std::collections::HashSet;
+
 use sdl2::mouse::MouseButton;
-use sdl2::pixels::Color;
 use sdl2::rect::Rect;
 use sdl2::render::{Canvas, RenderTarget};
 use sdl2::video::Window;
 use sdl2::EventPump;
 
-use crate::game::map::GameMap;
+use crate::game::map::{GameMap, Tile};
+use crate::utils::Side;
 
 /// Represent all the context needed to access the window
 pub struct Context {
@@ -78,8 +80,14 @@ impl From<(i32, i32)> for Cell {
 }
 
 impl Cell {
-    pub fn world_pos(&self) -> WorldPosition {
+    /// Give the world position of the top left corner of the cell
+    pub fn start_point(&self) -> WorldPosition {
         (self.0 as f32, self.1 as f32).into()
+    }
+
+    /// Give the world position of the center of the cell
+    pub fn center_point(&self) -> WorldPosition {
+        (self.0 as f32 + 0.5, self.1 as f32 + 0.5).into()
     }
 }
 
@@ -112,33 +120,104 @@ impl View {
     }
 
     /// Render the view on the given canvas
-    pub fn render<T: RenderTarget>(&self, canvas: &mut Canvas<T>, mouse: &Mouse) {
-        // Determine which cells are visible from the view
-        let covered_cells = (
-            self.get_world_pos((0, 0)).cell(),
-            self.get_world_pos(self.get_size()).cell(),
-        );
+    pub fn render<T: RenderTarget>(&self, canvas: &mut Canvas<T>) {
 
-        let cell_size = self.get_cell_size();
+        let mut border_cells = HashSet::new();
 
         // Render each cell to the canvas
-        for x in covered_cells.0 .0..=covered_cells.1 .0 {
-            for y in covered_cells.0 .1..=covered_cells.1 .1 {
-                // Get the right color to draw the cell
-                canvas.set_draw_color(self.game_map.get_tile((x, y)).tile_color());
+        for ((x, y), _tile_type) in self.game_map.iter_tiles() {
+            if let Tile::Empty = self.game_map.get_tile((x, y)) {
+                continue;
+            }
 
-                // Draw with a different color if the mouse is on
-                if let Some(pos) = mouse.position {
-                    if self.get_world_pos(pos).cell() == Cell(x, y) {
-                        canvas.set_draw_color(Color::RED);
-                    }
+            let current_tile = self.game_map.get_tile((x, y));
+
+            // Look for each surrounding tile from top to bottom and left to right
+            let mut surrounding = [(Tile::Empty, (0, 0)); 4];
+
+            // Get every surrounding tile and its position
+            for (i, p) in Side::iter_dir().enumerate() {
+                surrounding[i] = (
+                    self.game_map.get_tile((x + p.0, y + p.1)),
+                    (x + p.0, y + p.1),
+                );
+            }
+
+            // Filter the borders for the ones with two different cells (which is the point of a border)
+            for (_, p) in surrounding.into_iter().filter(|x| x.0 != current_tile) {
+                border_cells.insert((Cell::from((x, y)), Cell::from(p)));
+            }
+        }
+
+        // Just help for readibility
+        fn move_cell(cell: Cell, dir: Side) -> Cell {
+            Cell::from((cell.0 + dir.dir().0, cell.1 + dir.dir().1))
+        }
+
+        while !border_cells.is_empty() {
+            let mut border = Vec::new();
+
+            let first = *border_cells.iter().next().unwrap();
+            let tile = self.game_map.get_tile(first.0);
+
+            let mut current = first;
+
+            // the current direction to follow the border with the right hand (from the inside)
+            let mut current_dir =
+                Side::from_dir((current.1 .0 - current.0 .0, current.1 .1 - current.0 .1))
+                    .unwrap()
+                    .turn_left();
+
+            loop {
+                // Get rid of that border so that it isn't inspected again
+                border_cells.remove(&current);
+                
+                // If the cell to the right is in, the area, we must turn and move
+                if self
+                    .game_map
+                    .get_tile(move_cell(current.0, current_dir.turn_right()))
+                    == tile
+                {
+                    current_dir = current_dir.turn_right();
+                    current.0 = move_cell(current.0, current_dir);
+                    
+                    // Otherwise, if the cell in front of the current onr is in the area, move on
+                } else if self.game_map.get_tile(move_cell(current.0, current_dir)) == tile {
+                    current.0 = move_cell(current.0, current_dir);
+
+                // Finally, if it isn't in al well, turn left
+                } else {
+                    current_dir = current_dir.turn_left();
                 }
+                
+                // recalculate the border faced cell
+                current.1 = move_cell(current.0, current_dir.turn_right());
 
-                // Draw the cell at the correct location
-                let WindowPosition(x, y) = self.get_window_pos(Cell(x, y).world_pos());
-                canvas
-                    .fill_rect(Rect::new(x, y, cell_size, cell_size))
-                    .unwrap();
+                // Add the tile to the border list in the order if it is a border
+                if self.game_map.get_tile(current.1) != tile {
+                    border.push(current);
+                }
+                
+                if current == first {
+                    break;
+                }
+            }
+
+            let (inside, outside) = (first.0.center_point(), first.1.center_point());
+            let mut last_point = WorldPosition::from(((inside.0 + outside.0)/2., (inside.1 + outside.1)/2.));
+            // Render the border
+            for (cell_in, cell_out) in border {
+                let (inside, outside) = (cell_in.center_point(), cell_out.center_point());
+                let point = WorldPosition::from(((inside.0 + outside.0)/2., (inside.1 + outside.1)/2.));
+                
+                canvas.set_draw_color(tile.tile_color());
+
+                let start_point = self.get_window_pos(last_point);
+                let end_point = self.get_window_pos(point);
+                canvas.draw_line((start_point.0, start_point.1), (end_point.0, end_point.1)).unwrap();
+
+
+                last_point = point
             }
         }
     }

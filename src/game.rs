@@ -12,7 +12,7 @@ pub fn launch(mut context: Context, game_map: GameMap) {
 
     'running: loop {
         // Render the view on the window
-        world_view.render(&mut context.window, &mouse);
+        world_view.render(&mut context.window);
 
         // Pull and handle all events
         let events = context.event_pump.poll_iter().collect::<Vec<Event>>();
