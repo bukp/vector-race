@@ -10,7 +10,7 @@ use crate::interface::Cell;
 /// Represent a tile on the map and all its properties
 ///
 /// Prototype, miss a lot of features for now
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Hash, Eq)]
 pub enum Tile {
     Empty,
     Road,

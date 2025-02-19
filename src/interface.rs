@@ -1,13 +1,17 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use sdl2::mouse::MouseButton;
-use sdl2::rect::Rect;
+use sdl2::pixels::Color;
 use sdl2::render::{Canvas, RenderTarget};
 use sdl2::video::Window;
 use sdl2::EventPump;
 
 use crate::game::map::{GameMap, Tile};
-use crate::utils::Side;
+use maths::{sdf_multiple_polygons, sdf_polygon, Side};
+
+pub use maths::{Cell, WindowPosition, WorldPosition};
+
+pub mod maths;
 
 /// Represent all the context needed to access the window
 pub struct Context {
@@ -42,55 +46,6 @@ impl Context {
     }
 }
 
-/// Represent a position on the window in pixel, therefore is most of the time non-negative
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct WindowPosition(pub i32, pub i32);
-
-impl From<(i32, i32)> for WindowPosition {
-    fn from(x: (i32, i32)) -> Self {
-        WindowPosition(x.0, x.1)
-    }
-}
-
-/// Represent an in world position, the integer part is the cell's position
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct WorldPosition(pub f32, pub f32);
-
-impl From<(f32, f32)> for WorldPosition {
-    fn from(x: (f32, f32)) -> Self {
-        WorldPosition(x.0, x.1)
-    }
-}
-
-impl WorldPosition {
-    /// Calculate cell indices corresponding to world position
-    pub fn cell(&self) -> Cell {
-        (self.0.floor() as i32, self.1.floor() as i32).into()
-    }
-}
-
-/// Represent a cell's position
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct Cell(pub i32, pub i32);
-
-impl From<(i32, i32)> for Cell {
-    fn from(x: (i32, i32)) -> Self {
-        Cell(x.0, x.1)
-    }
-}
-
-impl Cell {
-    /// Give the world position of the top left corner of the cell
-    pub fn start_point(&self) -> WorldPosition {
-        (self.0 as f32, self.1 as f32).into()
-    }
-
-    /// Give the world position of the center of the cell
-    pub fn center_point(&self) -> WorldPosition {
-        (self.0 as f32 + 0.5, self.1 as f32 + 0.5).into()
-    }
-}
-
 /// Structure representing the camera viewing the world, used to render it and interact with it (click, slide, zoom)
 #[derive(Debug, Clone)]
 pub struct View {
@@ -121,10 +76,8 @@ impl View {
 
     /// Render the view on the given canvas
     pub fn render<T: RenderTarget>(&self, canvas: &mut Canvas<T>) {
-
         let mut border_cells = HashSet::new();
 
-        // Render each cell to the canvas
         for ((x, y), _tile_type) in self.game_map.iter_tiles() {
             if let Tile::Empty = self.game_map.get_tile((x, y)) {
                 continue;
@@ -149,6 +102,9 @@ impl View {
             }
         }
 
+        // Vector containing all the borders
+        let mut borders_list: HashMap<Tile, Vec<Vec<(Cell, Cell)>>> = HashMap::new();
+
         // Just help for readibility
         fn move_cell(cell: Cell, dir: Side) -> Cell {
             Cell::from((cell.0 + dir.dir().0, cell.1 + dir.dir().1))
@@ -161,6 +117,7 @@ impl View {
             let tile = self.game_map.get_tile(first.0);
 
             let mut current = first;
+            border.push(current);
 
             // the current direction to follow the border with the right hand (from the inside)
             let mut current_dir =
@@ -171,7 +128,7 @@ impl View {
             loop {
                 // Get rid of that border so that it isn't inspected again
                 border_cells.remove(&current);
-                
+
                 // If the cell to the right is in, the area, we must turn and move
                 if self
                     .game_map
@@ -180,7 +137,7 @@ impl View {
                 {
                     current_dir = current_dir.turn_right();
                     current.0 = move_cell(current.0, current_dir);
-                    
+
                     // Otherwise, if the cell in front of the current onr is in the area, move on
                 } else if self.game_map.get_tile(move_cell(current.0, current_dir)) == tile {
                     current.0 = move_cell(current.0, current_dir);
@@ -189,7 +146,7 @@ impl View {
                 } else {
                     current_dir = current_dir.turn_left();
                 }
-                
+
                 // recalculate the border faced cell
                 current.1 = move_cell(current.0, current_dir.turn_right());
 
@@ -197,27 +154,46 @@ impl View {
                 if self.game_map.get_tile(current.1) != tile {
                     border.push(current);
                 }
-                
+
                 if current == first {
                     break;
                 }
             }
+            
+            if borders_list.contains_key(&tile) {
+                borders_list.get_mut(&tile).unwrap().push(border);
+            } else {
+                borders_list.insert(tile, vec![border]);
+            }
+        }
 
-            let (inside, outside) = (first.0.center_point(), first.1.center_point());
-            let mut last_point = WorldPosition::from(((inside.0 + outside.0)/2., (inside.1 + outside.1)/2.));
-            // Render the border
-            for (cell_in, cell_out) in border {
-                let (inside, outside) = (cell_in.center_point(), cell_out.center_point());
-                let point = WorldPosition::from(((inside.0 + outside.0)/2., (inside.1 + outside.1)/2.));
-                
-                canvas.set_draw_color(tile.tile_color());
+        for (tile, borders) in borders_list {
 
-                let start_point = self.get_window_pos(last_point);
-                let end_point = self.get_window_pos(point);
-                canvas.draw_line((start_point.0, start_point.1), (end_point.0, end_point.1)).unwrap();
-
-
-                last_point = point
+            let borders = borders
+                .into_iter()
+                .map(|x| {
+                    x.into_iter()
+                        .map(|x| {
+                            let (inside, outside) = (x.0.center_point(), x.1.center_point());
+                            WorldPosition::from((
+                                (inside.0 + outside.0) / 2.,
+                                (inside.1 + outside.1) / 2.,
+                            ))
+                        })
+                        .collect()
+                })
+                .collect();
+        
+            for x in 0..canvas.output_size().unwrap().0 {
+                for y in 0..canvas.output_size().unwrap().1 {
+                    let dist =
+                        sdf_multiple_polygons(&self.get_world_pos((x as i32, y as i32)), &borders);
+                    if dist <= 0. {
+                        let a = (((-dist * 10.).sin() * 32.).round() + 128.) as u8;
+                        canvas.set_draw_color(Color::RGB(a, a, a));
+                        canvas.draw_point((x as i32, y as i32)).unwrap();
+                    }
+                }
             }
         }
     }
