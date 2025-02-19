@@ -1,7 +1,6 @@
 use std::collections::{HashMap, HashSet};
 
 use sdl2::mouse::MouseButton;
-use sdl2::pixels::Color;
 use sdl2::rect::Rect;
 use sdl2::render::{Canvas, Texture, TextureCreator};
 use sdl2::video::{Window, WindowContext};
@@ -34,7 +33,12 @@ impl Context {
             .build()
             .unwrap();
 
-        let canvas = window.into_canvas().present_vsync().build().unwrap();
+        let canvas = window
+            .into_canvas()
+            .present_vsync()
+            .accelerated()
+            .build()
+            .unwrap();
         let event_pump = sdl_context.event_pump().unwrap();
 
         Self {
@@ -55,7 +59,11 @@ pub struct View<'a> {
     cam_size: (u16, u16),       // Size of the view
     game_map: GameMap,
     cell_size: u16, // Size of the cell's representation in pixel on the window
-    texture: (&'a TextureCreator<WindowContext>, Option<Texture<'a>>, Option<(Cell, Cell)>), // Texture creator, actual texture, texture cell coverage
+    texture: (
+        &'a TextureCreator<WindowContext>,
+        Option<Texture<'a>>,
+        Option<(Cell, Cell)>,
+    ), // Texture creator, actual texture, texture cell coverage
 }
 
 impl<'a> View<'a> {
@@ -82,7 +90,7 @@ impl<'a> View<'a> {
     /// Render the view on the given canvas
     pub fn render(&mut self, canvas: &mut Canvas<Window>) {
         if self.texture.1.is_none() {
-            self.pre_render(canvas);
+            self.pre_render();
         }
 
         let tex = self.texture.1.as_ref().unwrap();
@@ -93,14 +101,25 @@ impl<'a> View<'a> {
 
         let end = self.get_window_pos(cell_coverage.1.end_point());
 
-        canvas.copy(tex, None, Rect::new(start.0, start.1, (end.0 - start.0) as u32, (end.1 - start.1) as u32)).unwrap();
+        canvas
+            .copy(
+                tex,
+                None,
+                Rect::new(
+                    start.0,
+                    start.1,
+                    (end.0 - start.0) as u32,
+                    (end.1 - start.1) as u32,
+                ),
+            )
+            .unwrap();
     }
 
     /// Render the view on a texture, the given canvas is only used for creating the texture
-    pub fn pre_render(&mut self, canvas: &mut Canvas<Window>) {
+    pub fn pre_render(&mut self) {
         // Start cell (top left) and last cell (bottom right)
         let mut cell_range = ((0, 0), (0, 0));
-        
+
         for ((x, y), _) in self.game_map.iter_tiles() {
             if x < cell_range.0 .0 {
                 cell_range.0 .0 = x
@@ -115,7 +134,7 @@ impl<'a> View<'a> {
                 cell_range.1 .1 = y
             };
         }
-        
+
         self.texture.2 = Some((Cell::from(cell_range.0), Cell::from(cell_range.1)));
 
         let texture_size = (
@@ -128,7 +147,7 @@ impl<'a> View<'a> {
             .0
             .create_texture(
                 None,
-                sdl2::render::TextureAccess::Target,
+                sdl2::render::TextureAccess::Streaming,
                 texture_size.0,
                 texture_size.1,
             )
@@ -161,7 +180,7 @@ impl<'a> View<'a> {
         }
 
         // Vector containing all the borders
-        let mut borders_list: HashMap<Tile, Vec<Vec<(Cell, Cell)>>> = HashMap::new();
+        let mut borders_list: HashMap<Tile, Vec<Vec<WorldPosition>>> = HashMap::new();
 
         // Just help for readibility
         fn move_cell(cell: Cell, dir: Side) -> Cell {
@@ -218,6 +237,14 @@ impl<'a> View<'a> {
                 }
             }
 
+            let border = border
+                .into_iter()
+                .map(|x| {
+                    let (inside, outside) = (x.0.center_point(), x.1.center_point());
+                    WorldPosition::from(((inside.0 + outside.0) / 2., (inside.1 + outside.1) / 2.))
+                })
+                .collect();
+
             if borders_list.contains_key(&tile) {
                 borders_list.get_mut(&tile).unwrap().push(border);
             } else {
@@ -227,48 +254,39 @@ impl<'a> View<'a> {
 
         let starting_world_pos = Cell::from(cell_range.0).start_point();
 
-        canvas
-            .with_texture_canvas(&mut texture, |canvas| {
-                canvas.set_draw_color(Color::WHITE);
-                canvas.clear();
-            })
-            .unwrap();
+        texture
+            .with_lock(None, |buffer, pitch| {
+                for x in 0..texture_size.0 {
+                    'l: for y in 0..texture_size.1 {
+                        let world_pos = WorldPosition::from((
+                            starting_world_pos.0 + x as f32 / PRE_RENDERING_CELL_SIZE as f32,
+                            starting_world_pos.1 + y as f32 / PRE_RENDERING_CELL_SIZE as f32,
+                        ));
 
-        for (tile, borders) in borders_list {
-            let borders = borders
-                .into_iter()
-                .map(|x| {
-                    x.into_iter()
-                        .map(|x| {
-                            let (inside, outside) = (x.0.center_point(), x.1.center_point());
-                            WorldPosition::from((
-                                (inside.0 + outside.0) / 2.,
-                                (inside.1 + outside.1) / 2.,
-                            ))
-                        })
-                        .collect()
-                })
-                .collect();
+                        let offset = (y as usize * pitch) + (x as usize * 4);
 
-            canvas
-                .with_texture_canvas(&mut texture, |canvas| {
-                    for x in 0..canvas.output_size().unwrap().0 {
-                        for y in 0..canvas.output_size().unwrap().1 {
-                            let world_pos = WorldPosition::from((
-                                starting_world_pos.0 + x as f32 / PRE_RENDERING_CELL_SIZE as f32,
-                                starting_world_pos.1 + y as f32 / PRE_RENDERING_CELL_SIZE as f32,
-                            ));
-                            let dist = sdf_multiple_polygons(&world_pos, &borders);
+                        for (tile, borders) in &borders_list {
+                            let dist = sdf_multiple_polygons(&world_pos, borders);
+
                             if dist <= 0. {
-                                let a = (((-dist * 10.).sin() * 32.).round() + 128.) as u8;
-                                canvas.set_draw_color(Color::RGB(a, a, a));
-                                canvas.draw_point((x as i32, y as i32)).unwrap();
+                                let a = (((-dist * 10.).sin() * 64.).round()) as u8;
+                                let color = tile.tile_color();
+                                buffer[offset] = color.b;
+                                buffer[offset + 1] = color.g + a;
+                                buffer[offset + 2] = color.r;
+                                buffer[offset + 3] = 255;
+
+                                continue 'l;
                             }
                         }
+                        buffer[offset] = 255;
+                        buffer[offset + 1] = 255;
+                        buffer[offset + 2] = 255;
+                        buffer[offset + 3] = 255;
                     }
-                })
-                .unwrap();
-        }
+                }
+            })
+            .unwrap();
 
         self.texture.1 = Some(texture);
     }

@@ -109,6 +109,7 @@ impl GameMap {
         Ok(map)
     }
 
+    /// Iterate over every tile in the map
     pub fn iter_tiles(&self) -> impl Iterator<Item = ((i32, i32), &Tile)> {
         self.terrain.iter().map(|x| ((x.0 .0, x.0 .1), x.1))
     }

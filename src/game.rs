@@ -46,7 +46,7 @@ pub fn launch(mut context: Context, game_map: GameMap) {
                     if let Some((MouseButton::Right, _)) = mouse.get_click() {
                         let tile = world_view.get_world_pos(mouse.position.unwrap()).cell();
                         if world_view.get_map_mut().set_tile(tile, map::Tile::Dirt) {
-                            world_view.pre_render(&mut context.window);
+                            world_view.pre_render();
                         }
                     }
                 }
@@ -57,7 +57,7 @@ pub fn launch(mut context: Context, game_map: GameMap) {
                     if let Some((MouseButton::Right, _)) = mouse.get_click() {
                         let tile = world_view.get_world_pos(mouse.position.unwrap()).cell();
                         if world_view.get_map_mut().set_tile(tile, map::Tile::Dirt) {
-                            world_view.pre_render(&mut context.window);
+                            world_view.pre_render();
                         }
                     }
                 }

@@ -210,6 +210,8 @@ pub fn dot(v: &(f32, f32), w: &(f32, f32)) -> f32 {
 }
 
 /// Function retourning the signed distance to a segment, negative at the right of the line and negative at the left
+/// 
+/// If start and end are conbined, function will panic because there is an infinity of possible lines
 pub fn sdf_segment(
     tested_point: &WorldPosition,
     start: &WorldPosition,
@@ -229,6 +231,10 @@ pub fn sdf_segment(
     if dot(&vec(start, end), &vec(start, tested_point)) <= 0.
         || dot(&vec(end, start), &vec(end, tested_point)) <= 0.
     {
+        if d.abs() < 10e-6 {
+            return f32::MAX;
+        }
+
         // Min between the two
         dist(&tested_point, &start).min(dist(&tested_point, &end)) * d.signum()
 
