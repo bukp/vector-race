@@ -2,16 +2,19 @@ use std::collections::{HashMap, HashSet};
 
 use sdl2::mouse::MouseButton;
 use sdl2::pixels::Color;
-use sdl2::render::{Canvas, RenderTarget};
-use sdl2::video::Window;
+use sdl2::rect::Rect;
+use sdl2::render::{Canvas, Texture, TextureCreator};
+use sdl2::video::{Window, WindowContext};
 use sdl2::EventPump;
 
 use crate::game::map::{GameMap, Tile};
-use maths::{sdf_multiple_polygons, sdf_polygon, Side};
+use maths::{sdf_multiple_polygons, Side};
 
 pub use maths::{Cell, WindowPosition, WorldPosition};
 
 pub mod maths;
+
+const PRE_RENDERING_CELL_SIZE: u32 = 128;
 
 /// Represent all the context needed to access the window
 pub struct Context {
@@ -31,7 +34,7 @@ impl Context {
             .build()
             .unwrap();
 
-        let canvas = window.into_canvas().build().unwrap();
+        let canvas = window.into_canvas().present_vsync().build().unwrap();
         let event_pump = sdl_context.event_pump().unwrap();
 
         Self {
@@ -47,22 +50,23 @@ impl Context {
 }
 
 /// Structure representing the camera viewing the world, used to render it and interact with it (click, slide, zoom)
-#[derive(Debug, Clone)]
-pub struct View {
+pub struct View<'a> {
     start_point: WorldPosition, // Top right corner in world position
     cam_size: (u16, u16),       // Size of the view
     game_map: GameMap,
     cell_size: u16, // Size of the cell's representation in pixel on the window
+    texture: (&'a TextureCreator<WindowContext>, Option<Texture<'a>>, Option<(Cell, Cell)>), // Texture creator, actual texture, texture cell coverage
 }
 
-impl View {
+impl<'a> View<'a> {
     /// Create a new View
-    pub fn new<T: Into<WorldPosition>>(
+    pub fn new<'b, T: Into<WorldPosition>>(
+        texture_creator: &'b TextureCreator<WindowContext>,
         start_pos: T,
         cam_size: (u32, u32),
         game_map: GameMap,
         cell_size: u32,
-    ) -> Self {
+    ) -> View<'b> {
         View {
             start_point: start_pos.into(),
             cam_size: (
@@ -71,11 +75,65 @@ impl View {
             ),
             game_map,
             cell_size: cell_size.try_into().unwrap(),
+            texture: (texture_creator, None, None),
         }
     }
 
     /// Render the view on the given canvas
-    pub fn render<T: RenderTarget>(&self, canvas: &mut Canvas<T>) {
+    pub fn render(&mut self, canvas: &mut Canvas<Window>) {
+        if self.texture.1.is_none() {
+            self.pre_render(canvas);
+        }
+
+        let tex = self.texture.1.as_ref().unwrap();
+
+        let cell_coverage = self.texture.2.unwrap();
+
+        let start = self.get_window_pos(cell_coverage.0.start_point());
+
+        let end = self.get_window_pos(cell_coverage.1.end_point());
+
+        canvas.copy(tex, None, Rect::new(start.0, start.1, (end.0 - start.0) as u32, (end.1 - start.1) as u32)).unwrap();
+    }
+
+    /// Render the view on a texture, the given canvas is only used for creating the texture
+    pub fn pre_render(&mut self, canvas: &mut Canvas<Window>) {
+        // Start cell (top left) and last cell (bottom right)
+        let mut cell_range = ((0, 0), (0, 0));
+        
+        for ((x, y), _) in self.game_map.iter_tiles() {
+            if x < cell_range.0 .0 {
+                cell_range.0 .0 = x
+            };
+            if x > cell_range.1 .0 {
+                cell_range.1 .0 = x
+            };
+            if y < cell_range.0 .1 {
+                cell_range.0 .1 = y
+            };
+            if y > cell_range.1 .1 {
+                cell_range.1 .1 = y
+            };
+        }
+        
+        self.texture.2 = Some((Cell::from(cell_range.0), Cell::from(cell_range.1)));
+
+        let texture_size = (
+            (cell_range.1 .0 - cell_range.0 .0 + 1) as u32 * PRE_RENDERING_CELL_SIZE,
+            (cell_range.1 .1 - cell_range.0 .1 + 1) as u32 * PRE_RENDERING_CELL_SIZE,
+        );
+
+        let mut texture = self
+            .texture
+            .0
+            .create_texture(
+                None,
+                sdl2::render::TextureAccess::Target,
+                texture_size.0,
+                texture_size.1,
+            )
+            .unwrap();
+
         let mut border_cells = HashSet::new();
 
         for ((x, y), _tile_type) in self.game_map.iter_tiles() {
@@ -159,7 +217,7 @@ impl View {
                     break;
                 }
             }
-            
+
             if borders_list.contains_key(&tile) {
                 borders_list.get_mut(&tile).unwrap().push(border);
             } else {
@@ -167,8 +225,16 @@ impl View {
             }
         }
 
-        for (tile, borders) in borders_list {
+        let starting_world_pos = Cell::from(cell_range.0).start_point();
 
+        canvas
+            .with_texture_canvas(&mut texture, |canvas| {
+                canvas.set_draw_color(Color::WHITE);
+                canvas.clear();
+            })
+            .unwrap();
+
+        for (tile, borders) in borders_list {
             let borders = borders
                 .into_iter()
                 .map(|x| {
@@ -183,19 +249,28 @@ impl View {
                         .collect()
                 })
                 .collect();
-        
-            for x in 0..canvas.output_size().unwrap().0 {
-                for y in 0..canvas.output_size().unwrap().1 {
-                    let dist =
-                        sdf_multiple_polygons(&self.get_world_pos((x as i32, y as i32)), &borders);
-                    if dist <= 0. {
-                        let a = (((-dist * 10.).sin() * 32.).round() + 128.) as u8;
-                        canvas.set_draw_color(Color::RGB(a, a, a));
-                        canvas.draw_point((x as i32, y as i32)).unwrap();
+
+            canvas
+                .with_texture_canvas(&mut texture, |canvas| {
+                    for x in 0..canvas.output_size().unwrap().0 {
+                        for y in 0..canvas.output_size().unwrap().1 {
+                            let world_pos = WorldPosition::from((
+                                starting_world_pos.0 + x as f32 / PRE_RENDERING_CELL_SIZE as f32,
+                                starting_world_pos.1 + y as f32 / PRE_RENDERING_CELL_SIZE as f32,
+                            ));
+                            let dist = sdf_multiple_polygons(&world_pos, &borders);
+                            if dist <= 0. {
+                                let a = (((-dist * 10.).sin() * 32.).round() + 128.) as u8;
+                                canvas.set_draw_color(Color::RGB(a, a, a));
+                                canvas.draw_point((x as i32, y as i32)).unwrap();
+                            }
+                        }
                     }
-                }
-            }
+                })
+                .unwrap();
         }
+
+        self.texture.1 = Some(texture);
     }
 
     pub fn get_map_mut(&mut self) -> &mut GameMap {
@@ -203,7 +278,7 @@ impl View {
     }
 
     /// Slide the view by a vector in pixel representing the slide on the window
-    pub fn slide(&mut self, vector: (i32, i32)) {
+    pub fn move_camera(&mut self, vector: (i32, i32)) {
         let vector = (
             vector.0 as f32 / self.cell_size as f32,
             vector.1 as f32 / self.cell_size as f32,

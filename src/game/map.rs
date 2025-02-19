@@ -69,9 +69,13 @@ impl GameMap {
         }
     }
 
-    /// Set tile infos
-    pub fn set_tile<T: Into<Cell>>(&mut self, position: T, tile: Tile) {
-        self.terrain.insert(position.into(), tile);
+    /// Set tile infos, return true if the tile has been changed (new is not equal to former)
+    pub fn set_tile<T: Into<Cell>>(&mut self, position: T, tile: Tile) -> bool {
+        match self.terrain.insert(position.into(), tile) {
+            None => true,
+            Some(x) if x != tile => true,
+            _ => false,
+        }
     }
 
     /// Get tile infos from its position

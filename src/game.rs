@@ -7,11 +7,19 @@ use sdl2::pixels::Color;
 pub mod map;
 
 pub fn launch(mut context: Context, game_map: GameMap) {
-    let mut world_view = View::new((0., 0.), context.get_window_size(), game_map, 36);
+    let texture_creator = context.window.texture_creator();
+    let mut world_view = View::new(
+        &texture_creator,
+        (0., 0.),
+        context.get_window_size(),
+        game_map,
+        36,
+    );
     let mut mouse = Mouse::new();
 
     'running: loop {
         // Render the view on the window
+
         world_view.render(&mut context.window);
 
         // Pull and handle all events
@@ -33,11 +41,13 @@ pub fn launch(mut context: Context, game_map: GameMap) {
                     if let (Some(vector), Some((MouseButton::Middle | MouseButton::Left, _))) =
                         (mouse.move_to((x, y)), mouse.get_click())
                     {
-                        world_view.slide(vector);
+                        world_view.move_camera(vector);
                     };
                     if let Some((MouseButton::Right, _)) = mouse.get_click() {
                         let tile = world_view.get_world_pos(mouse.position.unwrap()).cell();
-                        world_view.get_map_mut().set_tile(tile, map::Tile::Dirt);
+                        if world_view.get_map_mut().set_tile(tile, map::Tile::Dirt) {
+                            world_view.pre_render(&mut context.window);
+                        }
                     }
                 }
                 Event::MouseButtonDown {
@@ -46,7 +56,9 @@ pub fn launch(mut context: Context, game_map: GameMap) {
                     mouse.click(mouse_btn, (x, y));
                     if let Some((MouseButton::Right, _)) = mouse.get_click() {
                         let tile = world_view.get_world_pos(mouse.position.unwrap()).cell();
-                        world_view.get_map_mut().set_tile(tile, map::Tile::Dirt);
+                        if world_view.get_map_mut().set_tile(tile, map::Tile::Dirt) {
+                            world_view.pre_render(&mut context.window);
+                        }
                     }
                 }
                 Event::MouseButtonUp {

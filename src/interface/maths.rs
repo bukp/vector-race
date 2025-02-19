@@ -45,6 +45,11 @@ impl Cell {
     pub fn center_point(&self) -> WorldPosition {
         (self.0 as f32 + 0.5, self.1 as f32 + 0.5).into()
     }
+
+    /// Give the world position of the bottom right corner of the cell
+    pub fn end_point(&self) -> WorldPosition {
+        (self.0 as f32 + 1., self.1 as f32 + 1.).into()
+    }
 }
 
 /// Represent the different sides of a square
@@ -205,7 +210,11 @@ pub fn dot(v: &(f32, f32), w: &(f32, f32)) -> f32 {
 }
 
 /// Function retourning the signed distance to a segment, negative at the right of the line and negative at the left
-pub fn sdf_segment(tested_point: &WorldPosition, start: &WorldPosition, end: &WorldPosition) -> f32 {
+pub fn sdf_segment(
+    tested_point: &WorldPosition,
+    start: &WorldPosition,
+    end: &WorldPosition,
+) -> f32 {
     // Calculate carthesian form (ax + bx + c = 0)
     let (a, b, c) = (
         end.1 - start.1,
@@ -235,7 +244,6 @@ pub fn sdf_segment(tested_point: &WorldPosition, start: &WorldPosition, end: &Wo
 ///
 /// Will fail if the polygon provided has less than two points
 pub fn sdf_polygon(tested_point: &WorldPosition, polygon: &Vec<WorldPosition>) -> f32 {
-
     let mut last = polygon.get(0).unwrap();
     let mut dist = f32::MAX;
     let mut i = 1;
@@ -256,7 +264,7 @@ pub fn sdf_polygon(tested_point: &WorldPosition, polygon: &Vec<WorldPosition>) -
 /// Function retourning the signed distance to a group of polygon clockwise, negative inside, positive outside
 ///
 /// An inverse polygon will be rendered as a hole
-/// 
+///
 /// Will fail if any polygon is invalid
 pub fn sdf_multiple_polygons(
     tested_point: &WorldPosition,
